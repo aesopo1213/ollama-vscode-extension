@@ -31,6 +31,20 @@
   },
   "license": "MIT",
   "main": "./dist/extension.js",
+  "activationEvents": [
+    "onCommand:vscode-ollama.setup",
+    "onCommand:vscode-ollama.chat",
+    "onCommand:vscode-ollama.new-chat",
+    "onCommand:vscode-ollama.clear-chat",
+    "onCommand:vscode-ollama.save-chat",
+    "onCommand:vscode-ollama.load-chat",
+    "onCommand:vscode-ollama.export-chat",
+    "onCommand:vscode-ollama.import-chat",
+    "onCommand:vscode-ollama.delete-chat",
+    "onCommand:vscode-ollama.mcp-settings",
+    "onView:ollamaModelsExplorer",
+    "onView:ollama-chat-history"
+  ],
   "contributes": {
     "commands": [
       {
