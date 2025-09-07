@@ -8,7 +8,7 @@ export class StdioMcpHandler implements IMcpHandler {
   private notificationListeners: Map<string, (notification: JsonRpcRequest) => void> = new Map();
   private logger: Logger = Logger.getInstance();
 
-  constructor(private context: vscode.ExtensionContext) {}
+  constructor(private context: vscode.ExtensionContext) { }
 
   isRunning(serverId: string): boolean {
     return this.runningProcesses.has(serverId);
@@ -91,7 +91,7 @@ export class StdioMcpHandler implements IMcpHandler {
     }
   }
 
-  async sendMessage(serverId: string, server: McpServer, message: JsonRpcRequest): Promise<JsonRpcResponse> {
+  async sendMessage(serverId: string, server: McpServer, message: JsonRpcRequest, timeout: number = 10000): Promise<JsonRpcResponse> {
     const process = this.runningProcesses.get(serverId);
     if (!process || !process.stdin || !process.stdout) {
       throw new Error(`MCP server ${server.name} not running`);
@@ -99,6 +99,13 @@ export class StdioMcpHandler implements IMcpHandler {
 
     return new Promise<JsonRpcResponse>((resolve, reject) => {
       let output: string = '';
+      let timeoutId: NodeJS.Timeout;
+
+      const cleanup = () => {
+        if (timeoutId) clearTimeout(timeoutId);
+        process.stdout?.off('data', onData);
+      };
+
       const onData = (data: Buffer) => {
         output += data.toString();
         const lines = output.split('\n').filter(line => line.trim());
@@ -106,12 +113,12 @@ export class StdioMcpHandler implements IMcpHandler {
           try {
             const response: JsonRpcResponse = JSON.parse(line);
             if (response.jsonrpc === '2.0' && response.id === message.id) {
-              process.stdout?.off('data', onData);
+              cleanup();
               resolve(response);
               return;
             }
           } catch (error) {
-            this.logger.debug(`Invalid JSON line: ${line}`);
+            this.logger.debug(`Invalid JSON line: ${line}`, 'MCP');
           }
         }
         output = '';
@@ -119,18 +126,14 @@ export class StdioMcpHandler implements IMcpHandler {
 
       process.stdout?.on('data', onData);
 
-      this.logger.debug(`Sending JSON-RPC message: ${JSON.stringify(message)}`);
+      this.logger.debug(`Sending JSON-RPC message: ${JSON.stringify(message)}`, 'MCP');
       process.stdin?.write(JSON.stringify(message) + '\n');
 
-      setTimeout(() => {
-        process.stdout?.off('data', onData);
-        process.stdin?.write(JSON.stringify({
-          jsonrpc: '2.0',
-          method: 'notifications/cancel',
-          params: { id: message.id }
-        }) + '\n');
+      timeoutId = setTimeout(() => {
+        cleanup();
+        this.logger.warn(`Timeout waiting for response from MCP server ${server.name}`, 'MCP');
         reject(new Error(`Timeout waiting for response from MCP server ${server.name}`));
-      }, 5000);
+      }, timeout);
     });
   }
 

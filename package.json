@@ -2,7 +2,7 @@
   "name": "vscode-ollama",
   "displayName": "Ollama for VS Code",
   "description": "Run Ollama language models locally within VS Code with MCP server support",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "publisher": "ollama-vscode",
   "engines": {
     "vscode": "^1.85.0"
@@ -246,6 +246,73 @@
           "type": "boolean",
           "default": true,
           "description": "Show streaming output in real-time"
+        },
+        "vscode-ollama.mcpServers": {
+          "type": "array",
+          "default": [],
+          "description": "Configured MCP servers",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "stdio",
+                  "sse"
+                ]
+              },
+              "command": {
+                "type": "string"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "env": {
+                "type": "object"
+              },
+              "url": {
+                "type": "string"
+              },
+              "headers": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "vscode-ollama.mcpTimeout": {
+          "type": "number",
+          "default": 10000,
+          "description": "MCP request timeout in milliseconds"
+        },
+        "vscode-ollama.mcpRetryAttempts": {
+          "type": "number",
+          "default": 3,
+          "description": "Number of retry attempts for failed MCP requests"
+        },
+        "vscode-ollama.mcpAutoStart": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically start configured MCP servers on extension activation"
+        },
+        "vscode-ollama.mcpLogLevel": {
+          "type": "string",
+          "default": "info",
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
+          "description": "Log level for MCP operations"
         }
       }
     }

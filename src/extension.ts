@@ -9,9 +9,12 @@ import { McpTreeDataProvider } from './provider/mcpTreeDataProvider';
 import { StatusBarManager } from './ui/statusBarManager';
 import { Logger } from './services/logger';
 
+// Global service instances for cleanup
+let mcpServerService: McpServerService | undefined;
+
 export function activate(context: vscode.ExtensionContext) {
   // Initialize services
-  const mcpServerService = new McpServerService(context);
+  mcpServerService = new McpServerService(context);
   const ollamaService = new OllamaService(context, mcpServerService);
   const statusBar = new StatusBarManager();
   const logger = Logger.getInstance();
@@ -20,23 +23,23 @@ export function activate(context: vscode.ExtensionContext) {
   const modelProvider = new ModelTreeDataProvider(ollamaService);
   const chatHistoryProvider = new ChatHistoryProvider(context);
   const mcpProvider = new McpTreeDataProvider(context, mcpServerService);
-  
+
   // Register webview providers
   const chatViewProvider = new ChatViewProvider(context, ollamaService, statusBar, chatHistoryProvider);
   const mcpSettingsProvider = new McpSettingsProvider(context, mcpServerService);
-  
+
   // Register tree views
   const modelsView = vscode.window.createTreeView('ollamaModelsView', {
     treeDataProvider: modelProvider,
     showCollapseAll: true
   });
-  
+
   const chatsView = vscode.window.createTreeView('ollamaChatsView', {
     treeDataProvider: chatHistoryProvider,
     showCollapseAll: true,
     canSelectMany: true
   });
-  
+
   const mcpView = vscode.window.createTreeView('ollamaMcpView', {
     treeDataProvider: mcpProvider,
     showCollapseAll: false,
@@ -84,8 +87,8 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showErrorMessage('No Ollama models found. Please install at least one model.');
       return;
     }
-    
-    chatViewProvider.createOrShowWebview(undefined, undefined, {model: model});
+
+    chatViewProvider.createOrShowWebview(undefined, undefined, { model: model });
   });
 
   const openChatHistoryCommand = vscode.commands.registerCommand('vscode-ollama.openChatHistory', (session: ChatSession) => {
@@ -112,7 +115,7 @@ export function activate(context: vscode.ExtensionContext) {
       const viewIdsToDelete = selectedItems.map(item => item.session.viewId);
       const updatedChats = chats.filter(ch => !viewIdsToDelete.includes(ch.viewId));
       await context.globalState.update('ollama.chats', updatedChats);
-      
+
       chatHistoryProvider.refresh();
       logger.info(`Deleted chat${selectedItems.length > 1 ? 's' : ''}: ${titlesList} (source: ${source})`);
       vscode.window.showInformationMessage(`Deleted chat${selectedItems.length > 1 ? 's' : ''}: ${titlesList}`);
@@ -126,7 +129,7 @@ export function activate(context: vscode.ExtensionContext) {
     if (!item) {
       item = chatHistoryProvider.getSelectedItems()[0];
     }
-    
+
     if (!item || !(item instanceof ChatHistoryItem)) {
       vscode.window.showInformationMessage('No chat selected to rename.');
       return;
@@ -159,25 +162,25 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage(`Chat renamed to "${newTitle}".`);
     }
   });
-  
+
   const generateFromSelectionCommand = vscode.commands.registerCommand('vscode-ollama.generateFromSelection', async () => {
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
       vscode.window.showErrorMessage('No active editor found');
       return;
     }
-    
+
     const selection = editor.selection;
     const text = editor.document.getText(selection);
-    
+
     if (!text) {
       vscode.window.showErrorMessage('No text selected');
       return;
     }
-    
+
     chatViewProvider.createOrShowWebview(text);
   });
-  
+
   const refreshModelsCommand = vscode.commands.registerCommand('vscode-ollama.refreshModels', async () => {
     try {
       statusBar.setLoading('Refreshing models...');
@@ -218,7 +221,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     const serverNames = [];
     for (const id of serverIds) {
-      const server = mcpServerService.getMcpServer(id);
+      const server = mcpServerService?.getMcpServer(id);
       if (server) serverNames.push(server.name);
     }
     const namesList = serverNames.join(', ');
@@ -235,8 +238,8 @@ export function activate(context: vscode.ExtensionContext) {
         title: `Removing ${serverIds.length} MCP server${serverIds.length > 1 ? 's' : ''}...`
       }, async () => {
         for (const serverId of serverIds) {
-          const server = mcpServerService.getMcpServer(serverId);
-          if (server) {
+          const server = mcpServerService?.getMcpServer(serverId);
+          if (server && mcpServerService) {
             await mcpServerService.removeMcpServer(serverId);
             logger.info(`Removed MCP server: ${server.name} (source: ${source})`);
           }
@@ -258,9 +261,11 @@ export function activate(context: vscode.ExtensionContext) {
       return;
     }
     try {
-      await mcpServerService.startMcpServer(serverId);
-      mcpProvider.refresh();
-      vscode.window.showInformationMessage(`Started MCP server`);
+      if (mcpServerService) {
+        await mcpServerService.startMcpServer(serverId);
+        mcpProvider.refresh();
+        vscode.window.showInformationMessage(`Started MCP server`);
+      }
     } catch (error) {
       logger.error('Failed to start MCP server', 'MCP', error);
       vscode.window.showErrorMessage(`Failed to start MCP server: ${error}`);
@@ -274,9 +279,11 @@ export function activate(context: vscode.ExtensionContext) {
       return;
     }
     try {
-      await mcpServerService.stopMcpServer(serverId);
-      mcpProvider.refresh();
-      vscode.window.showInformationMessage(`Stopped MCP server`);
+      if (mcpServerService) {
+        await mcpServerService.stopMcpServer(serverId);
+        mcpProvider.refresh();
+        vscode.window.showInformationMessage(`Stopped MCP server`);
+      }
     } catch (error) {
       logger.error('Failed to stop MCP server', 'MCP', error);
       vscode.window.showErrorMessage(`Failed to stop MCP server: ${error}`);
@@ -290,8 +297,10 @@ export function activate(context: vscode.ExtensionContext) {
       return;
     }
     try {
-      const success = await mcpServerService.testMcpServer(serverId);
-      vscode.window.showInformationMessage(success ? 'Test successful' : 'Test failed');
+      if (mcpServerService) {
+        const success = await mcpServerService.testMcpServer(serverId);
+        vscode.window.showInformationMessage(success ? 'Test successful' : 'Test failed');
+      }
     } catch (error) {
       logger.error('Failed to test MCP server', 'MCP', error);
       vscode.window.showErrorMessage(`Failed to test MCP server: ${error}`);
@@ -332,11 +341,19 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.showErrorMessage('Failed to connect to Ollama. Make sure Ollama is running.');
     logger.error('Failed to load models', 'Ollama', error);
   });
-  
+
   logger.info('Ollama extension activated');
   vscode.window.showInformationMessage('Ollama extension activated! Start a new chat or manage MCP servers from the sidebar.');
 }
 
 export function deactivate() {
-  Logger.getInstance().info('Deactivating Ollama extension');
+  const logger = Logger.getInstance();
+  logger.info('Deactivating Ollama extension');
+
+  // Cleanup MCP server connections
+  if (mcpServerService) {
+    mcpServerService.cleanup().catch((error: unknown) => {
+      logger.error('Failed to cleanup MCP servers during deactivation', 'MCP', error);
+    });
+  }
 }

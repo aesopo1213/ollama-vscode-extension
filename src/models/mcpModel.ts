@@ -45,7 +45,7 @@ export interface IMcpHandler {
   isRunning(serverId: string): boolean;
   start(serverId: string, server: McpServer): Promise<void>;
   stop(serverId: string, server: McpServer): Promise<void>;
-  sendMessage(serverId: string, server: McpServer, message: JsonRpcRequest): Promise<JsonRpcResponse>;
+  sendMessage(serverId: string, server: McpServer, message: JsonRpcRequest, timeout?: number): Promise<JsonRpcResponse>;
   registerNotificationListener(serverId: string, listener: (notification: JsonRpcRequest) => void): void;
 }
 

@@ -1,19 +1,21 @@
 ﻿<!DOCTYPE html>
 <html lang="en" id="{{viewId}}">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{cspSource}} 'unsafe-inline'; script-src 'nonce={{nonce}}' {{cspSource}}; img-src {{cspSource}} https:;">
+    <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; style-src {{cspSource}} 'unsafe-inline'; script-src 'nonce={{nonce}}' {{cspSource}}; img-src {{cspSource}} https:;">
     <title>Ollama Chat</title>
-    <style>
-        {{cssContent}}
-    </style>
+    <link rel="stylesheet" href="{{cssUri}}">
 </head>
+
 <body>
     <div class="container">
         <div class="header">
             <span class="header-title" contenteditable="false" id="header-title">Ollama Chat</span>
-            <span class="tool-icon no-tool" id="tool-icon" data-tooltip="This model does not support tool calling."></span>
+            <span class="tool-icon no-tool" id="tool-icon"
+                data-tooltip="This model does not support tool calling."></span>
             <select class="select-model" id="model-selector">
                 <option value="" disabled selected>Loading models...</option>
             </select>
@@ -22,24 +24,16 @@
         <div class="input-container">
             <div class="system-prompt-container" id="system-prompt-container">
                 <label class="system-prompt-label" for="system-prompt">System Prompt (instructions for the AI)</label>
-                <textarea
-                    class="system-prompt-input"
-                    id="system-prompt"
-                    placeholder="You are a helpful assistant..."
-                    rows="2"
-                ></textarea>
+                <textarea class="system-prompt-input" id="system-prompt" placeholder="You are a helpful assistant..."
+                    rows="2"></textarea>
             </div>
             <div class="textarea-wrapper">
-                <textarea
-                    class="prompt-textarea"
-                    id="prompt-textarea"
-                    placeholder="Enter your message..."
-                    rows="2"
-                ></textarea>
+                <textarea class="prompt-textarea" id="prompt-textarea" placeholder="Enter your message..."
+                    rows="2"></textarea>
             </div>
             <div class="input-buttons">
                 <div class="left-buttons">
-                    <button class="system-message-toggle" id="system-message-toggle">+ Add system message</button>
+                    <button class="system-message-toggle show" id="system-message-toggle">Show system message</button>
                 </div>
                 <div class="action-buttons">
                     <button id="clear-button">Clear Chat</button>
@@ -50,4 +44,5 @@
     </div>
     <script nonce="{{nonce}}" src="{{jsUri}}/chat.js"></script>
 </body>
+
 </html>

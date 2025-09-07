@@ -51,7 +51,7 @@ export class SseMcpHandler implements IMcpHandler {
     this.sessions.delete(serverId);
   }
 
-  async sendMessage(serverId: string, server: McpServer, message: JsonRpcRequest): Promise<JsonRpcResponse> {
+  async sendMessage(serverId: string, server: McpServer, message: JsonRpcRequest, timeout: number = 10000): Promise<JsonRpcResponse> {
     if (!server.url) {
       throw new Error(`No URL specified for SSE MCP server: ${server.name}`);
     }
@@ -72,20 +72,39 @@ export class SseMcpHandler implements IMcpHandler {
       const response = await axios.post<JsonRpcResponse>(
         `${server.url}/messages`,
         message,
-        { headers, timeout: 5000 }
+        {
+          headers,
+          timeout,
+          validateStatus: (status) => status < 500 // Don't throw for 4xx errors
+        }
       );
+
       if (response.headers['mcp-session-id']) {
         session.sessionId = response.headers['mcp-session-id'] as string;
         this.sessions.set(serverId, session);
       }
+
+      if (response.status >= 400) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
       return response.data;
     } catch (error: any) {
       if (error.response?.status === 404 && session.sessionId) {
-        this.logger.info(`Session expired for server ${server.name}, restarting`);
+        this.logger.info(`Session expired for server ${server.name}, restarting`, 'MCP');
         await this.stop(serverId, server);
         await this.start(serverId, server);
         throw new Error('Session expired, please retry');
       }
+
+      if (error.code === 'ECONNABORTED') {
+        throw new Error(`Request timeout for MCP server ${server.name}`);
+      }
+
+      if (error.response?.status) {
+        throw new Error(`HTTP ${error.response.status}: ${error.response.statusText}`);
+      }
+
       throw error;
     }
   }

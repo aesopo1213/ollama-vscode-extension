@@ -26,13 +26,31 @@ export class McpServerService {
     version: '1.0.0'
   };
   private requestIdCounter: number = 100; // Start from 100 to avoid conflicting with fixed IDs
+  private config: vscode.WorkspaceConfiguration;
+  private retryAttempts: number = 3;
+  private requestTimeout: number = 10000;
+  private isCleaningUp: boolean = false;
 
   constructor(private context: vscode.ExtensionContext) {
+    this.config = vscode.workspace.getConfiguration('vscode-ollama');
+    this.retryAttempts = this.config.get<number>('mcpRetryAttempts', 3);
+    this.requestTimeout = this.config.get<number>('mcpTimeout', 10000);
+
     const savedServers = this.context.globalState.get<McpServer[]>('ollama.mcpServers', []);
     savedServers.forEach(s => this.mcpServers.set(s.id, s));
     this.handlers.set('stdio', new StdioMcpHandler(context));
     this.handlers.set('sse', new SseMcpHandler());
     this.initializeServerStates();
+
+    // Listen for configuration changes
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('vscode-ollama.mcpTimeout')) {
+        this.requestTimeout = this.config.get<number>('mcpTimeout', 10000);
+      }
+      if (e.affectsConfiguration('vscode-ollama.mcpRetryAttempts')) {
+        this.retryAttempts = this.config.get<number>('mcpRetryAttempts', 3);
+      }
+    }, null, this.context.subscriptions);
   }
 
   private async initializeServerStates(): Promise<void> {
@@ -53,6 +71,94 @@ export class McpServerService {
         });
       }
     }
+  }
+
+  /**
+   * Validates MCP server configuration for security and correctness
+   */
+  private validateMcpServer(server: McpServer): { valid: boolean; error?: string } {
+    if (!server.id || !server.name) {
+      return { valid: false, error: 'Server must have both id and name' };
+    }
+
+    if (server.type === 'stdio') {
+      if (!server.command) {
+        return { valid: false, error: 'STDIO server must have a command' };
+      }
+      // Security: Prevent execution of potentially dangerous commands
+      const dangerousCommands = ['rm', 'del', 'format', 'fdisk', 'mkfs', 'dd', 'shutdown', 'reboot'];
+      const commandName = server.command.split(/[/\\]/).pop()?.toLowerCase();
+      if (commandName && dangerousCommands.includes(commandName)) {
+        return { valid: false, error: `Command '${commandName}' is not allowed for security reasons` };
+      }
+    } else if (server.type === 'sse') {
+      if (!server.url) {
+        return { valid: false, error: 'SSE server must have a URL' };
+      }
+      try {
+        const url = new URL(server.url);
+        if (!['http:', 'https:'].includes(url.protocol)) {
+          return { valid: false, error: 'SSE server URL must use HTTP or HTTPS protocol' };
+        }
+      } catch {
+        return { valid: false, error: 'Invalid SSE server URL format' };
+      }
+    } else {
+      return { valid: false, error: 'Server type must be either "stdio" or "sse"' };
+    }
+
+    return { valid: true };
+  }
+
+  /**
+   * Enhanced error handling with retry logic
+   */
+  private async executeWithRetry<T>(
+    operation: () => Promise<T>,
+    operationName: string,
+    serverName?: string
+  ): Promise<T> {
+    let lastError: Error | undefined;
+
+    for (let attempt = 1; attempt <= this.retryAttempts; attempt++) {
+      try {
+        return await operation();
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        const logPrefix = serverName ? `[${serverName}]` : '';
+
+        if (attempt < this.retryAttempts) {
+          this.logger.warn(`${logPrefix} ${operationName} failed (attempt ${attempt}/${this.retryAttempts}): ${lastError.message}`, 'MCP');
+          // Exponential backoff
+          await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+        } else {
+          this.logger.error(`${logPrefix} ${operationName} failed after ${this.retryAttempts} attempts: ${lastError.message}`, 'MCP', lastError);
+        }
+      }
+    }
+
+    throw lastError;
+  }
+
+  /**
+   * Cleanup all MCP server connections
+   */
+  public async cleanup(): Promise<void> {
+    if (this.isCleaningUp) return;
+    this.isCleaningUp = true;
+
+    this.logger.info('Cleaning up MCP server connections...', 'MCP');
+
+    const cleanupPromises = Array.from(this.mcpServers.keys()).map(async (serverId) => {
+      try {
+        await this.stopMcpServer(serverId);
+      } catch (error) {
+        this.logger.error(`Failed to cleanup server ${serverId}`, 'MCP', error);
+      }
+    });
+
+    await Promise.allSettled(cleanupPromises);
+    this.logger.info('MCP server cleanup completed', 'MCP');
   }
 
   public async startMcpServer(serverId: string): Promise<void> {
@@ -159,7 +265,11 @@ export class McpServerService {
           id: 1 // Fixed ID for initialization
         };
 
-        const initResponse = await handler.sendMessage(server.id, server, initializeRequest);
+        const initResponse = await this.executeWithRetry(
+          () => handler.sendMessage(server.id, server, initializeRequest, this.requestTimeout),
+          'initialize MCP server',
+          server.name
+        );
 
         if (initResponse.error) {
           if (initResponse.error.code === -32602 && initResponse.error.data?.supported) {
@@ -185,7 +295,11 @@ export class McpServerService {
           jsonrpc: '2.0',
           method: 'notifications/initialized'
         };
-        await handler.sendMessage(server.id, server, initializedNotification);
+        await this.executeWithRetry(
+          () => handler.sendMessage(server.id, server, initializedNotification, this.requestTimeout),
+          'send initialized notification',
+          server.name
+        );
 
         initialized = true;
 
@@ -271,7 +385,11 @@ export class McpServerService {
       params: {},
       id: this.requestIdCounter++
     };
-    const listToolsResponse = await handler.sendMessage(serverId, server, listToolsRequest);
+    const listToolsResponse = await this.executeWithRetry(
+      () => handler.sendMessage(serverId, server, listToolsRequest, this.requestTimeout),
+      'list tools',
+      server.name
+    );
 
     if (listToolsResponse.error) {
       throw new Error(`Failed to fetch tools: ${listToolsResponse.error.message}`);
@@ -279,10 +397,10 @@ export class McpServerService {
 
     const tools = Array.isArray(listToolsResponse.result.tools)
       ? listToolsResponse.result.tools.map((tool: any) => ({
-          name: tool.name,
-          description: tool.description,
-          parameters: tool.inputSchema?.properties ?? {}
-        }))
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.inputSchema?.properties ?? {}
+      }))
       : [];
 
     this.mcpTools.set(serverId, tools);
@@ -297,7 +415,11 @@ export class McpServerService {
       params: {},
       id: this.requestIdCounter++
     };
-    const listPromptsResponse = await handler.sendMessage(serverId, server, listPromptsRequest);
+    const listPromptsResponse = await this.executeWithRetry(
+      () => handler.sendMessage(serverId, server, listPromptsRequest, this.requestTimeout),
+      'list prompts',
+      server.name
+    );
 
     if (listPromptsResponse.error) {
       throw new Error(`Failed to fetch prompts: ${listPromptsResponse.error.message}`);
@@ -305,11 +427,11 @@ export class McpServerService {
 
     const prompts = Array.isArray(listPromptsResponse.result.prompts)
       ? listPromptsResponse.result.prompts.map((prompt: any) => ({
-          name: prompt.name,
-          title: prompt.title,
-          description: prompt.description,
-          arguments: prompt.arguments || []
-        }))
+        name: prompt.name,
+        title: prompt.title,
+        description: prompt.description,
+        arguments: prompt.arguments || []
+      }))
       : [];
 
     state.prompts = prompts;
@@ -323,7 +445,11 @@ export class McpServerService {
       params: {},
       id: this.requestIdCounter++
     };
-    const listResourcesResponse = await handler.sendMessage(serverId, server, listResourcesRequest);
+    const listResourcesResponse = await this.executeWithRetry(
+      () => handler.sendMessage(serverId, server, listResourcesRequest, this.requestTimeout),
+      'list resources',
+      server.name
+    );
 
     if (listResourcesResponse.error) {
       throw new Error(`Failed to fetch resources: ${listResourcesResponse.error.message}`);
@@ -331,12 +457,12 @@ export class McpServerService {
 
     const resources = Array.isArray(listResourcesResponse.result.resources)
       ? listResourcesResponse.result.resources.map((resource: any) => ({
-          uri: resource.uri,
-          name: resource.name,
-          title: resource.title,
-          description: resource.description,
-          mimeType: resource.mimeType
-        }))
+        uri: resource.uri,
+        name: resource.name,
+        title: resource.title,
+        description: resource.description,
+        mimeType: resource.mimeType
+      }))
       : [];
 
     state.resources = resources;
@@ -444,7 +570,11 @@ export class McpServerService {
         id: this.requestIdCounter++
       };
 
-      const response = await handler.sendMessage(serverId, targetServer, callToolRequest);
+      const response = await this.executeWithRetry(
+        () => handler.sendMessage(serverId, targetServer, callToolRequest, this.requestTimeout),
+        `call tool ${request.toolName}`,
+        targetServer.name
+      );
 
       if (response.error) {
         return { success: false, error: response.error.message };
@@ -459,9 +589,16 @@ export class McpServerService {
   }
 
   public async addMcpServer(server: McpServer): Promise<void> {
+    // Validate server configuration
+    const validation = this.validateMcpServer(server);
+    if (!validation.valid) {
+      throw new Error(`Invalid MCP server configuration: ${validation.error}`);
+    }
+
     if (this.mcpServers.has(server.id)) {
       throw new Error(`MCP server with ID ${server.id} already exists`);
     }
+
     this.mcpServers.set(server.id, server);
     this.serverStates.set(server.id, {
       capabilities: {},
@@ -473,7 +610,7 @@ export class McpServerService {
       status: 'Stopped'
     });
     await this.context.globalState.update('ollama.mcpServers', Array.from(this.mcpServers.values()));
-    this.logger.info(`Added MCP server: ${server.name}`);
+    this.logger.info(`Added MCP server: ${server.name} (${server.type})`, 'MCP');
   }
 
   public async updateMcpServer(serverId: string, updatedServer: Partial<McpServer>): Promise<void> {

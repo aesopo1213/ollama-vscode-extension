@@ -10,7 +10,7 @@ import { ChatHistoryProvider } from '../provider/chatHistoryProvider';
 
 export class ChatViewProvider {
   public static readonly viewType = 'ollama.chatView';
-  
+
   private _panels: Map<string, vscode.WebviewPanel> = new Map();
   private _defaultTitle: string = 'Ollama Chat';
   private _titles: Map<string, string> = new Map();
@@ -76,7 +76,8 @@ export class ChatViewProvider {
           vscode.Uri.joinPath(this._extensionUri, 'media'),
           vscode.Uri.joinPath(this._extensionUri, 'dist'),
           vscode.Uri.joinPath(this._extensionUri, 'src', 'webview'),
-          vscode.Uri.joinPath(this._extensionUri, 'src', 'webview', 'js')
+          vscode.Uri.joinPath(this._extensionUri, 'src', 'webview', 'js'),
+          vscode.Uri.joinPath(this._extensionUri, 'src', 'webview', 'css')
         ]
       }
     );
@@ -409,22 +410,24 @@ export class ChatViewProvider {
   }
 
   private _getHtmlForWebview(webview: vscode.Webview, viewId: string): string {
-    const theme = vscode.window.activeColorTheme;
-    const isDarkTheme = theme.kind === vscode.ColorThemeKind.Dark || theme.kind === vscode.ColorThemeKind.HighContrast;
-
+    // Use VSCode's native theme colors for perfect integration
     const colors = {
-      backgroundColor: isDarkTheme ? '#1e1e1e' : '#ffffff',
-      inputBackground: isDarkTheme ? '#3c3c3c' : '#f3f3f3',
-      buttonBackground: isDarkTheme ? '#0e639c' : '#007acc',
-      buttonHoverBackground: isDarkTheme ? '#1177bb' : '#0062a3',
-      buttonTextColor: isDarkTheme ? '#ffffff' : '#ffffff',
-      textColor: isDarkTheme ? '#cccccc' : '#333333',
-      userMessageBackground: isDarkTheme ? '#2b3a55' : '#e6f7ff',
-      aiMessageBackground: isDarkTheme ? '#3c3c3c' : '#f5f5f5',
-      borderColor: isDarkTheme ? '#474747' : '#e0e0e0',
-      codeBackground: isDarkTheme ? '#1e1e1e' : '#f5f5f5',
-      codeColor: isDarkTheme ? '#d7ba7d' : '#800000',
-      separatorColor: isDarkTheme ? '#444444' : '#e0e0e0'
+      backgroundColor: 'var(--vscode-editor-background)',
+      inputBackground: 'var(--vscode-input-background)',
+      buttonBackground: 'var(--vscode-button-background)',
+      buttonHoverBackground: 'var(--vscode-button-hoverBackground)',
+      buttonTextColor: 'var(--vscode-button-foreground)',
+      textColor: 'var(--vscode-foreground)',
+      userMessageBackground: 'var(--vscode-button-background)',
+      userMessageTextColor: 'var(--vscode-button-foreground)',
+      aiMessageBackground: 'var(--vscode-editorWidget-background)',
+      aiMessageTextColor: 'var(--vscode-foreground)',
+      borderColor: 'var(--vscode-input-border)',
+      codeBackground: 'var(--vscode-textCodeBlock-background)',
+      codeColor: 'var(--vscode-textPreformat-foreground)',
+      separatorColor: 'var(--vscode-input-border)',
+      focusColor: 'var(--vscode-focusBorder)',
+      shadowColor: 'var(--vscode-widget-shadow)'
     };
 
     const htmlPath = path.join(this._extensionUri.fsPath, 'src', 'webview', 'chat.html');
@@ -439,28 +442,59 @@ export class ChatViewProvider {
       throw new Error(`Failed to read files: ${error}`);
     }
 
-    cssContent = cssContent
-      .replace(/{{backgroundColor}}/g, colors.backgroundColor)
-      .replace(/{{inputBackground}}/g, colors.inputBackground)
-      .replace(/{{buttonBackground}}/g, colors.buttonBackground)
-      .replace(/{{buttonHoverBackground}}/g, colors.buttonHoverBackground)
-      .replace(/{{buttonTextColor}}/g, colors.buttonTextColor)
-      .replace(/{{textColor}}/g, colors.textColor)
-      .replace(/{{userMessageBackground}}/g, colors.userMessageBackground)
-      .replace(/{{aiMessageBackground}}/g, colors.aiMessageBackground)
-      .replace(/{{borderColor}}/g, colors.borderColor)
-      .replace(/{{codeBackground}}/g, colors.codeBackground)
-      .replace(/{{codeColor}}/g, colors.codeColor)
-      .replace(/{{separatorColor}}/g, colors.separatorColor);
+    // Create CSS variables to inject at the top of the CSS
+    const cssVariables = `
+:root {
+  --chat-background-color: ${colors.backgroundColor};
+  --chat-input-background: ${colors.inputBackground};
+  --chat-button-background: ${colors.buttonBackground};
+  --chat-button-hover-background: ${colors.buttonHoverBackground};
+  --chat-button-text-color: ${colors.buttonTextColor};
+  --chat-text-color: ${colors.textColor};
+  --chat-user-message-background: ${colors.userMessageBackground};
+  --chat-user-message-text-color: ${colors.userMessageTextColor};
+  --chat-ai-message-background: ${colors.aiMessageBackground};
+  --chat-ai-message-text-color: ${colors.aiMessageTextColor};
+  --chat-border-color: ${colors.borderColor};
+  --chat-code-background: ${colors.codeBackground};
+  --chat-code-color: ${colors.codeColor};
+  --chat-separator-color: ${colors.separatorColor};
+  --chat-focus-color: ${colors.focusColor};
+  --chat-shadow-color: ${colors.shadowColor};
+}
+`;
+
+    // Create a temporary CSS file with variables injected
+    const tempCssContent = cssVariables + cssContent;
+    const tempCssPath = path.join(this._extensionUri.fsPath, 'dist', `chat-${viewId}.css`);
+
+    try {
+      // Ensure dist directory exists
+      const distDir = path.dirname(tempCssPath);
+      if (!fs.existsSync(distDir)) {
+        fs.mkdirSync(distDir, { recursive: true });
+      }
+
+      // Write the CSS file with injected variables
+      fs.writeFileSync(tempCssPath, tempCssContent, 'utf8');
+      Logger.getInstance().debug(`CSS file created: ${tempCssPath}`);
+    } catch (error) {
+      Logger.getInstance().error(`Failed to write CSS file: ${error}`);
+    }
 
     const jsUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'src', 'webview', 'js'));
+    const cssUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'dist', `chat-${viewId}.css`));
 
-    return htmlContent
+    const finalHtml = htmlContent
       .replace(/{{viewId}}/g, viewId)
       .replace(/{{nonce}}/g, viewId)
       .replace(/{{cspSource}}/g, webview.cspSource)
-      .replace(/{{cssContent}}/g, cssContent)
+      .replace(/{{cssUri}}/g, cssUri.toString())
       .replace(/{{jsUri}}/g, jsUri.toString());
+
+    Logger.getInstance().debug(`CSS URI: ${cssUri.toString()}`);
+
+    return finalHtml;
   }
 
   private _disposePanel(viewId: string): void {
@@ -470,5 +504,16 @@ export class ChatViewProvider {
       this._panels.delete(viewId);
     }
     this._abortControllers.delete(viewId);
+
+    // Clean up temporary CSS file
+    const tempCssPath = path.join(this._extensionUri.fsPath, 'dist', `chat-${viewId}.css`);
+    try {
+      if (fs.existsSync(tempCssPath)) {
+        fs.unlinkSync(tempCssPath);
+        Logger.getInstance().debug(`Cleaned up CSS file: ${tempCssPath}`);
+      }
+    } catch (error) {
+      Logger.getInstance().error(`Failed to clean up CSS file: ${error}`);
+    }
   }
 }
